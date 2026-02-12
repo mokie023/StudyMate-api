@@ -3,7 +3,8 @@ set -e
 
 APP_DIR="/var/www/html"
 
-echo "Starting Apache on PORT=${PORT:-10000}"
+PORT="${PORT:-10000}"
+echo "Starting Apache on PORT=${PORT}"
 cd "$APP_DIR"
 
 # ------------------------------------------------------------
@@ -19,6 +20,14 @@ mkdir -p storage/framework/cache \
 chown -R www-data:www-data storage bootstrap/cache || true
 chmod -R ug+rwx storage bootstrap/cache || true
 
+# Render assigns a dynamic port; make Apache listen on it.
+sed -ri "s/^Listen 80$/Listen ${PORT}/" /etc/apache2/ports.conf
+sed -ri "s/<VirtualHost \*:80>/<VirtualHost *:${PORT}>/" /etc/apache2/sites-available/000-default.conf
+
+# Silence Apache startup warning about missing ServerName.
+echo "ServerName localhost" > /etc/apache2/conf-available/servername.conf
+a2enconf servername >/dev/null 2>&1 || true
+
 # ------------------------------------------------------------
 # 2) Required app key
 # ------------------------------------------------------------
@@ -33,19 +42,19 @@ fi
 php artisan config:clear || true
 php artisan route:clear  || true
 php artisan view:clear   || true
-php artisan cache:clear  || true
+CACHE_DRIVER=array php artisan cache:clear || true
 
 # ------------------------------------------------------------
-# 4) Migrate only when DB configured & reachable
+# 4) Migrate only when DB configured
 # ------------------------------------------------------------
 if [ -z "${DATABASE_URL:-}" ] && [ -z "${DB_HOST:-}" ]; then
-  echo "No DATABASE_URL/DB_HOST set. Skipping DB checks & migrations."
+  echo "No DATABASE_URL/DB_HOST set. Skipping migrations."
 else
-  if php artisan db:monitor >/dev/null 2>&1; then
-    echo "DB reachable ✅ Running migrations..."
-    php artisan migrate --force || true
+  echo "Running migrations..."
+  if php artisan migrate --force --no-interaction; then
+    echo "Migrations complete."
   else
-    echo "Skipping migrate (DB not reachable / bad credentials)"
+    echo "Skipping migrate (DB not reachable / bad credentials / migration error)"
   fi
 fi
 
